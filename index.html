@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arkventuro</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body,html{width:100%;height:100%;overflow:hidden;font-family:Arial,sans-serif;background:#1e293b;color:white;text-align:center;}
+canvas{display:block;background:linear-gradient(#4a7a4a,#1e293b);}
+.menu{display:none;position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(20,20,20,0.95);justify-content:center;align-items:center;flex-direction:column;z-index:10;}
+.menu.active{display:flex;}
+.menu button{background:#ff9800;border:none;padding:12px 30px;font-size:1.2em;border-radius:10px;margin:10px;color:white;cursor:pointer;}
+.menu h1{font-size:2.5em;margin-bottom:30px;color:#ffcc00;}
+#hud{position:absolute;top:10px;left:50%;transform:translateX(-50%);width:90%;display:flex;justify-content:space-between;align-items:center;z-index:5;}
+#healthbar{width:200px;height:20px;background:red;border-radius:10px;overflow:hidden;border:2px solid #fff;}
+#health{background:lime;height:100%;width:100%;transition:0.3s;}
+#scoreDisplay,#waveDisplay,#coinsDisplay{font-size:1.2em;}
+#controls{position:absolute;bottom:20px;left:20px;display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(2,60px);gap:10px;z-index:5;}
+.ctrl-btn{background:rgba(255,255,255,0.2);border-radius:50%;border:2px solid white;font-size:2em;color:white;user-select:none;}
+#fire{position:absolute;bottom:40px;right:40px;width:80px;height:80px;background:rgba(255,0,0,0.5);border-radius:50%;border:2px solid white;color:white;font-size:1.8em;}
+#shield{position:absolute;bottom:140px;right:40px;width:80px;height:80px;background:rgba(0,0,255,0.5);border-radius:50%;border:2px solid white;color:white;font-size:1.8em;}
+.upgrade-btn,.shop-btn{background:#4caf50;border:none;padding:15px 30px;margin:10px;font-size:1.2em;border-radius:10px;color:white;cursor:pointer;}
+.flash{animation:flash 0.5s;}
+@keyframes flash{0%{background:white;}100%{background:#1e293b;}}
+</style>
+</head>
+<body>
+
+<div id="menuStart" class="menu active">
+<h1>Arkventuro</h1>  <h1>version 1.10</h1>
+<button id="playBtn">▶ Jouer</button>
+<button id="settingsBtn">⚙ Paramètres</button>
+<button id="shopBtn">🛒 Boutique</button>
+</div>
+
+<div id="menuModes" class="menu">
+<h1>Choisis ton mode</h1>
+<button id="modeVague">⚔️ Mode Vague</button>
+<button id="modeSurvie">🥇 Mode Survie</button>
+<button id="modeChrono">⏱️ Mode Chrono</button>
+<button id="backMain">← Retour</button>
+</div>
+
+<div id="menuEnd" class="menu">
+<h1>Game Over</h1>
+<p id="finalScore"></p>
+<ul id="scoreList"></ul>
+<button id="restartBtn">↻ Rejouer</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="hud">
+<div id="healthbar"><div id="health"></div></div>
+<div id="scoreDisplay">Score : 0</div>
+<div id="waveDisplay"></div>
+<div id="coinsDisplay"></div>
+</div>
+
+<div id="controls">
+<button id="up" class="ctrl-btn">▲</button>
+<button id="left" class="ctrl-btn">◀</button>
+<button id="down" class="ctrl-btn">▼</button>
+<button id="right" class="ctrl-btn">▶</button>
+</div>
+<button id="fire">🔥</button>
+<button id="shield">🛡️</button>
+
+<audio id="shootSound" src="https://actions.google.com/sounds/v1/impacts/wood_plank_flicks.ogg"></audio>
+<audio id="hitSound" src="https://actions.google.com/sounds/v1/cartoon/cartoon_boing.ogg"></audio>
+<audio id="bgMusic" src="https://cdn.pixabay.com/audio/2022/03/14/audio_9c05c2e7b8.mp3" loop></audio>
+
+<script>
+// --- INITIALISATION ---
+const canvas=document.getElementById("gameCanvas"),ctx=canvas.getContext("2d");
+canvas.width=window.innerWidth;canvas.height=window.innerHeight;
+
+let mode="vague",score=0,wave=1,playerSpeed=5,damage=10,shieldBoost=0,coins=0;
+const player={x:canvas.width/2,y:canvas.height/2,size:40,hp:100,shield:false,step:0};
+let bullets=[],enemies=[],enemyBullets=[],keys={},running=false,paused=false,chronoTime=60,chronoInterval=null;
+
+// --- CONTROLES ---
+window.addEventListener("keydown",e=>{keys[e.key]=true;if(e.code==="Space")fireBullet(mouse.x,mouse.y);if(e.key==="Shift")player.shield=true;});
+window.addEventListener("keyup",e=>{keys[e.key]=false;if(e.key==="Shift")player.shield=false;});
+const mouse={x:canvas.width/2,y:canvas.height/2};
+canvas.addEventListener("mousemove",e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+canvas.addEventListener("click",()=>fireBullet(mouse.x,mouse.y));
+
+function fireBullet(tx,ty){
+  const dx=tx-player.x,dy=ty-player.y,dist=Math.hypot(dx,dy);
+  bullets.push({x:player.x,y:player.y,dx:dx/dist*10,dy:dy/dist*10,size:10});
+  document.getElementById("shootSound").currentTime=0;document.getElementById("shootSound").play();
+}
+
+// --- DESSIN ANIME ---
+function drawHuman(x,y,s,c,step){
+  ctx.save();ctx.translate(x,y);
+  const armSwing=Math.sin(step/5)*s*0.15;
+  const legSwing=Math.sin(step/5)*s*0.2;
+  // tête
+  ctx.fillStyle=c;ctx.beginPath();ctx.arc(0,-s*0.3,s*0.2,0,Math.PI*2);ctx.fill();
+  // corps
+  ctx.fillRect(-s*0.15,-s*0.2,s*0.3,s*0.5);
+  // bras animés
+  ctx.fillRect(-s*0.15-armSwing,-s*0.2,s*0.1,s*0.4);
+  ctx.fillRect(s*0.05+armSwing,-s*0.2,s*0.1,s*0.4);
+  // jambes animées
+  ctx.fillRect(-s*0.15,0.3+legSwing,s*0.1,s*0.3);
+  ctx.fillRect(s*0.05,-0.3+legSwing,s*0.1,s*0.3);
+  ctx.restore();
+}
+
+// --- ENNEMIS ---
+function spawnEnemy(){
+  enemies.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,size:35,speed:2,hp:30,alive:true,step:0});
+}
+
+function movePlayer(){
+  if(keys["ArrowLeft"]||keys["a"])player.x-=playerSpeed;
+  if(keys["ArrowRight"]||keys["d"])player.x+=playerSpeed;
+  if(keys["ArrowUp"]||keys["w"])player.y-=playerSpeed;
+  if(keys["ArrowDown"]||keys["s"])player.y+=playerSpeed;
+  player.step++;
+}
+
+function moveEnemies(){
+  enemies.forEach(e=>{
+    if(!e.alive)return;
+    let dx=player.x-e.x,dy=player.y-e.y,dist=Math.hypot(dx,dy);
+    e.x+=dx/dist*e.speed;e.y+=dy/dist*e.speed;e.step++;
+    if(Math.random()<0.01)enemyBullets.push({x:e.x,y:e.y,dx:dx/dist*6,dy:dy/dist*6,size:8});
+  });
+}
+
+function updateBullets(){
+  bullets.forEach((b,i)=>{
+    b.x+=b.dx;b.y+=b.dy;
+    enemies.forEach(e=>{
+      if(e.alive && Math.hypot(b.x-e.x,b.y-e.y)<e.size/2+b.size/2){
+        e.hp-=damage;
+        bullets.splice(i,1);
+        if(e.hp<=0){e.alive=false;score++;coins+=5;}
+      }
+    });
+  });
+  enemyBullets.forEach((b,i)=>{
+    b.x+=b.dx;b.y+=b.dy;
+    if(Math.hypot(b.x-player.x,b.y-player.y)<player.size/2+b.size/2 && !player.shield){
+      player.hp-=5;document.getElementById("health").style.width=player.hp+"%";
+      enemyBullets.splice(i,1);
+      if(player.hp<=0)endGame();
+    }
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="#4a7a4a";ctx.fillRect(0,0,canvas.width,canvas.height);
+  drawHuman(player.x,player.y,player.size,"blue",player.step);
+  enemies.forEach(e=>{if(e.alive)drawHuman(e.x,e.y,e.size,"red",e.step);});
+  ctx.fillStyle="yellow";bullets.forEach(b=>ctx.fillRect(b.x,b.y,b.size,b.size));
+  ctx.fillStyle="orange";enemyBullets.forEach(b=>ctx.fillRect(b.x,b.y,b.size,b.size));
+}
+
+function loop(){if(!running)return;movePlayer();moveEnemies();updateBullets();draw();requestAnimationFrame(loop);}
+
+// --- START ---
+for(let i=0;i<5;i++)spawnEnemy();
+running=true;loop();
+</script>
+</body>
+</html>
